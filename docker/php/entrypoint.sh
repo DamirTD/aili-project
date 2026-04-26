@@ -36,6 +36,10 @@ fi
 echo "[entrypoint] Clearing config cache..."
 php artisan config:clear >/dev/null 2>&1 || true
 
+# Force Laravel to use built assets from public/build.
+# This prevents blank page after restarts when stale Vite hot file exists.
+rm -f public/hot
+
 if [ "${AUTO_MIGRATE:-true}" = "true" ]; then
   echo "[entrypoint] Running migrations..."
   php artisan migrate --force
