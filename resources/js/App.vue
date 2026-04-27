@@ -1,26 +1,19 @@
 <script setup>
-import { onMounted, ref } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { analyzeDiagnosis } from './services/api';
 
-const PROFILE_STORAGE_KEY = 'diagnosis_profile';
-const SPLASH_TIMEOUT_MS = 1400;
-
+const mode = ref('landing');
 const description = ref('');
-const selectedImage = ref(null);
-const previewUrl = ref('');
 const result = ref(null);
 const errorText = ref('');
 const loading = ref(false);
-const showSplash = ref(true);
-const profileStep = ref('choice');
-const profile = ref({
-    age: '',
-    gender: '',
-});
-const genderOptions = [
-    { value: 'male', icon: '♂', label: 'Мужской' },
-    { value: 'female', icon: '♀', label: 'Женский' },
-];
+const age = ref('');
+
+const productSection = ref(null);
+const productVideoScale = ref(0.82);
+const openFaqIndex = ref(1);
+const resourcesCarousel = ref(null);
+
 const ageOptions = [
     { value: '0-12', icon: '👶', label: '0-12' },
     { value: '13-17', icon: '🧒', label: '13-17' },
@@ -30,91 +23,19 @@ const ageOptions = [
     { value: '61+', icon: '👴', label: '61+' },
 ];
 
-function genderLabel(value) {
-    const found = genderOptions.find((item) => item.value === value);
-    return found ? found.label : '—';
-}
+const faqItems = [
+    { question: 'Нужна ли банковская карта для начала?', answer: 'Нет, можно начать без привязки карты и протестировать сервис.' },
+    { question: 'Можно ли отменить подписку в любой момент?', answer: 'Да, подписку можно остановить в любой момент.' },
+    { question: 'Почему стоит использовать MedAssistand AI?', answer: 'Сервис дает структурированный ответ по симптомам и понятный план действий.' },
+    { question: 'Данные пациента защищены?', answer: 'Да, данные обрабатываются с учетом требований безопасности.' },
+];
 
-function startWithProfile() {
-    profileStep.value = 'profile';
-}
-
-function skipProfile() {
-    clearProfile();
-    profileStep.value = 'form';
-}
-
-function backToChoice() {
-    profileStep.value = 'choice';
-}
-
-function backToProfile() {
-    profileStep.value = 'profile';
-}
-
-function saveProfile() {
-    if (!profile.value.age || !profile.value.gender) {
-        clearProfile();
-        profileStep.value = 'form';
-        return;
-    }
-
-    if (profile.value.age.includes('-')) {
-        profile.value.age = profile.value.age.split('-')[0];
-    }
-    if (profile.value.age === '61+') {
-        profile.value.age = '61';
-    }
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile.value));
-    profileStep.value = 'form';
-}
-
-function clearProfile() {
-    profile.value.age = '';
-    profile.value.gender = '';
-    localStorage.removeItem(PROFILE_STORAGE_KEY);
-}
-
-function buildDiagnosisFormData() {
-    const formData = new FormData();
-    formData.append('description', description.value.trim());
-
-    if (profile.value.age !== '') {
-        formData.append('age', profile.value.age);
-    }
-    if (profile.value.gender !== '') {
-        formData.append('gender', profile.value.gender);
-    }
-    if (selectedImage.value) {
-        formData.append('image', selectedImage.value);
-    }
-
-    return formData;
-}
-
-onMounted(() => {
-    setTimeout(() => {
-        showSplash.value = false;
-    }, SPLASH_TIMEOUT_MS);
-
-    const saved = localStorage.getItem(PROFILE_STORAGE_KEY);
-    if (saved) {
-        try {
-            const parsed = JSON.parse(saved);
-            profile.value.age = parsed.age ?? '';
-            profile.value.gender = parsed.gender ?? '';
-            profileStep.value = 'choice';
-        } catch {
-            profileStep.value = 'choice';
-        }
-    }
-});
-
-function onFileChange(event) {
-    const file = event.target.files?.[0] ?? null;
-    selectedImage.value = file;
-    previewUrl.value = file ? URL.createObjectURL(file) : '';
-}
+const resourceItems = [
+    { title: 'OWID', description: 'Данные по факторам риска и метрики здоровья.', link: 'https://ourworldindata.org/' },
+    { title: 'WHO', description: 'Рекомендации Всемирной организации здравоохранения.', link: 'https://www.who.int/' },
+    { title: 'NHS', description: 'Проверенные гайды по симптомам.', link: 'https://www.nhs.uk/' },
+    { title: 'PubMed', description: 'Научные публикации и исследования.', link: 'https://pubmed.ncbi.nlm.nih.gov/' },
+];
 
 function urgencyClass(value) {
     const text = String(value ?? '').toLowerCase();
@@ -127,150 +48,206 @@ function urgencyClass(value) {
     return 'is-low';
 }
 
-async function onSubmit() {
-    errorText.value = '';
-    result.value = null;
-
-    if (!description.value.trim() && !selectedImage.value) {
-        errorText.value = 'Добавьте текст симптомов или фото.';
+function updateProductVideoScale() {
+    if (!productSection.value) {
         return;
     }
+    const rect = productSection.value.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || 1;
+    const progress = (viewportHeight - rect.top) / (viewportHeight + rect.height * 0.55);
+    const normalized = Math.max(0, Math.min(progress, 1));
+    productVideoScale.value = 0.82 + normalized * 0.3;
+}
 
-    const formData = buildDiagnosisFormData();
+onMounted(() => {
+    updateProductVideoScale();
+    window.addEventListener('scroll', updateProductVideoScale, { passive: true });
+    window.addEventListener('resize', updateProductVideoScale);
+});
 
+onBeforeUnmount(() => {
+    window.removeEventListener('scroll', updateProductVideoScale);
+    window.removeEventListener('resize', updateProductVideoScale);
+});
+
+function startFromHome() {
+    if (!description.value.trim()) {
+        errorText.value = 'Опишите, что вас беспокоит.';
+        return;
+    }
+    errorText.value = '';
+    result.value = null;
+    age.value = '';
+    mode.value = 'age';
+}
+
+async function runAnalysis() {
+    errorText.value = '';
+    result.value = null;
     loading.value = true;
+
+    const formData = new FormData();
+    formData.append('description', description.value.trim());
+    if (age.value) {
+        formData.append('age', age.value === '61+' ? '61' : age.value.split('-')[0]);
+    }
 
     try {
         result.value = await analyzeDiagnosis(formData);
+        mode.value = 'result';
     } catch (error) {
         errorText.value = error.message;
     } finally {
         loading.value = false;
     }
 }
+
+async function chooseAgeAndAnalyze(value) {
+    age.value = value;
+    await runAnalysis();
+}
+
+async function skipAgeAndAnalyze() {
+    age.value = '';
+    await runAnalysis();
+}
+
+function goHome() {
+    mode.value = 'landing';
+    result.value = null;
+    errorText.value = '';
+}
+
+async function goToSection(sectionId) {
+    if (mode.value !== 'landing') {
+        goHome();
+        await nextTick();
+    }
+
+    const target = document.getElementById(sectionId);
+    if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+function toggleFaq(index) {
+    openFaqIndex.value = openFaqIndex.value === index ? -1 : index;
+}
+
+function scrollResources(direction) {
+    if (!resourcesCarousel.value) {
+        return;
+    }
+    const offset = Math.round(resourcesCarousel.value.clientWidth * 0.8);
+    resourcesCarousel.value.scrollBy({
+        left: direction === 'next' ? offset : -offset,
+        behavior: 'smooth',
+    });
+}
 </script>
 
 <template>
     <main>
-        <section v-if="showSplash" class="splash-screen">
-            <div class="splash-logo">M</div>
-            <h2>Med Assistant</h2>
-            <p>Загрузка сервиса...</p>
-            <div class="splash-loader"></div>
-        </section>
-
-        <section v-else class="page-shell app">
-            <header class="hero">
-                <span class="hero-badge">Медицинский помощник</span>
-                <h1>Помощник предварительной оценки симптомов</h1>
-                <p class="subtitle">
-                    Опишите симптомы и/или добавьте фото. Сервис даст структурированный ответ с рисками и
-                    действиями.
-                </p>
-                <div class="hero-points">
-                    <span class="hero-point">Быстрый ответ</span>
-                    <span class="hero-point">Текст + фото</span>
-                    <span class="hero-point">Понятные рекомендации</span>
-                </div>
+        <section class="page-shell app">
+            <header class="topbar">
+                <div class="brand-mark">MedAssistand AI</div>
+                <nav class="top-nav" aria-label="Main navigation">
+                    <button type="button" class="nav-link" @click="goToSection('product')">Product</button>
+                    <button type="button" class="nav-link" @click="goToSection('resources')">Resources</button>
+                    <button type="button" class="nav-link" @click="goToSection('faq')">FAQ</button>
+                </nav>
             </header>
 
             <p v-if="errorText" class="error">{{ errorText }}</p>
             <p v-if="loading" class="loading">AI анализирует запрос...</p>
 
-            <section v-if="profileStep === 'choice'" class="card input-card choice-card">
-                <div class="choice-tiles">
-                    <button type="button" class="option-tile" @click="startWithProfile">
-                        <span class="tile-icon">🧑‍⚕️</span>
-                        <span class="tile-title">Указать пол и возраст</span>
-                    </button>
-                    <button type="button" class="option-tile" @click="skipProfile">
-                        <span class="tile-icon">💬</span>
-                        <span class="tile-title">Сразу к форме симптомов</span>
-                    </button>
-                </div>
-            </section>
+            <template v-if="mode === 'landing'">
+                <section class="hero">
+                    <h1 class="hero-title">Диагностика симптомов без догадок</h1>
+                    <p class="hero-subtitle">быстро, четко, по делу</p>
+                    <form class="hero-request" @submit.prevent="startFromHome">
+                        <textarea
+                            v-model="description"
+                            class="prompt-textarea hero-textarea"
+                            rows="3"
+                            placeholder="Что вас беспокоит? Опишите симптомы..."
+                        />
+                        <button type="submit" class="hero-submit">Попробовать бесплатно</button>
+                    </form>
+                </section>
 
-            <section v-else-if="profileStep === 'profile'" class="card input-card">
-                <h2>Профиль пациента</h2>
+                <section ref="productSection" class="product-section" id="product">
+                    <h2 class="product-section-title">Обзор решения</h2>
+                    <div class="product-visual" aria-label="Product video showcase">
+                        <div class="product-video-shell" :style="{ transform: `scale(${productVideoScale})` }">
+                            <div class="video-placeholder">
+                                <div class="video-play">▶</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
 
-                <p class="pick-label">Пол</p>
-                <div class="profile-tiles">
-                    <button
-                        v-for="item in genderOptions"
-                        :key="item.value"
-                        type="button"
-                        class="profile-tile"
-                        :class="{ active: profile.gender === item.value }"
-                        @click="profile.gender = item.value"
-                    >
-                        <span class="tile-icon">{{ item.icon }}</span>
-                        <span class="tile-title">{{ item.label }}</span>
-                    </button>
-                </div>
+                <section class="faq-section" id="faq">
+                    <h2 class="faq-title">FAQ</h2>
+                    <p class="faq-subtitle">Есть вопрос? У нас есть ответы.</p>
+                    <div class="faq-list">
+                        <article
+                            v-for="(item, index) in faqItems"
+                            :key="item.question"
+                            class="faq-item"
+                            :class="{ open: openFaqIndex === index }"
+                        >
+                            <button type="button" class="faq-question" @click="toggleFaq(index)">
+                                <span>{{ item.question }}</span>
+                                <span class="faq-icon">{{ openFaqIndex === index ? '−' : '+' }}</span>
+                            </button>
+                            <p v-if="openFaqIndex === index" class="faq-answer">{{ item.answer }}</p>
+                        </article>
+                    </div>
+                </section>
 
-                <p class="pick-label">Возраст</p>
+                <section class="resources-section" id="resources">
+                    <div class="resources-head">
+                        <h2 class="resources-title">Resources</h2>
+                        <div class="resources-controls">
+                            <button type="button" class="resources-nav" @click="scrollResources('prev')">←</button>
+                            <button type="button" class="resources-nav" @click="scrollResources('next')">→</button>
+                        </div>
+                    </div>
+                    <div ref="resourcesCarousel" class="resources-carousel">
+                        <article v-for="item in resourceItems" :key="item.title" class="resource-card">
+                            <h3 class="resource-title">{{ item.title }}</h3>
+                            <p class="resource-description">{{ item.description }}</p>
+                            <a class="resource-link" :href="item.link" target="_blank" rel="noreferrer">Перейти к источнику</a>
+                        </article>
+                    </div>
+                </section>
+
+                <footer class="page-footer">
+                    <p>© MedAssistand AI. Все права защищены.</p>
+                </footer>
+            </template>
+
+            <section v-else-if="mode === 'age'" class="card input-card result-intro">
+                <h2>Укажите возраст или пропустите</h2>
                 <div class="profile-tiles age-tiles">
                     <button
                         v-for="item in ageOptions"
                         :key="item.value"
                         type="button"
                         class="profile-tile age-tile"
-                        :class="{ active: profile.age === item.value }"
-                        @click="profile.age = item.value"
+                        @click="chooseAgeAndAnalyze(item.value)"
                     >
                         <span class="tile-icon">{{ item.icon }}</span>
                         <span class="tile-title">{{ item.label }}</span>
                     </button>
                 </div>
-
                 <div class="choice-buttons">
-                    <button type="button" class="ghost-btn" @click="backToChoice">Назад</button>
-                    <button type="button" class="ghost-btn" @click="skipProfile">Пропустить</button>
-                    <button type="button" class="primary-btn" @click="saveProfile">Сохранить и продолжить</button>
+                    <button type="button" class="ghost-btn" @click="skipAgeAndAnalyze">Пропустить</button>
                 </div>
             </section>
 
-            <section v-else class="card input-card">
-                <form class="grid" @submit.prevent="onSubmit">
-                    <p v-if="profile.age || profile.gender" class="profile-chip">
-                        Профиль: возраст {{ profile.age || '—' }}, пол {{ genderLabel(profile.gender) }}
-                    </p>
-                    <button
-                        v-if="profile.age || profile.gender"
-                        type="button"
-                        class="ghost-btn clear-btn"
-                        @click="clearProfile"
-                    >
-                        Сбросить профиль
-                    </button>
-                    <label>Что вы чувствуете?</label>
-                    <textarea
-                        v-model="description"
-                        rows="5"
-                        placeholder="Например: колющая боль в груди, одышка, слабость..."
-                    />
-
-                    <label>Загрузите изображение (опционально)</label>
-                    <label class="upload-field">
-                        <input type="file" accept="image/*" @change="onFileChange" />
-                        <span class="upload-btn">{{ selectedImage ? 'Изменить файл' : 'Выбрать файл' }}</span>
-                        <span class="upload-name">
-                            {{ selectedImage ? selectedImage.name : 'Файл не выбран' }}
-                        </span>
-                    </label>
-
-                    <img v-if="previewUrl" :src="previewUrl" alt="preview" class="preview" />
-
-                    <div class="action-row">
-                        <button type="button" class="ghost-btn" @click="backToProfile">
-                            Назад к полу и возрасту
-                        </button>
-                        <button type="submit" class="primary-btn submit-btn">Запустить AI-анализ</button>
-                    </div>
-                </form>
-            </section>
-
-            <section v-if="result" class="card result">
+            <section v-else-if="result" class="card result">
                 <div class="result-top">
                     <h2>Результат анализа</h2>
                 </div>
@@ -300,7 +277,7 @@ async function onSubmit() {
 
                 <h3>Что делать сейчас</h3>
                 <ul v-if="result.care_plan?.length">
-                    <li v-for="step in result.care_plan" :key="step">{{ step }}</li>
+                    <li v-for="stepItem in result.care_plan" :key="stepItem">{{ stepItem }}</li>
                 </ul>
                 <p v-else class="source-empty">План действий не заполнен, рекомендуется очная консультация.</p>
 
@@ -310,21 +287,6 @@ async function onSubmit() {
                 </ul>
                 <p v-else class="source-empty">Красные флаги не указаны. При ухудшении состояния обратитесь за помощью.</p>
 
-                <h3>Рекомендации по рискам (OWID)</h3>
-                <div v-if="result.owid_insights?.length" class="owid-grid">
-                    <article v-for="item in result.owid_insights" :key="item.title + item.url" class="owid-card">
-                        <p class="owid-title">{{ item.title }}</p>
-                        <p class="owid-label">Совет</p>
-                        <p class="owid-advice">{{ item.advice || 'Следите за факторами риска и проходите профилактические проверки.' }}</p>
-                        <p class="owid-label">Почему это важно</p>
-                        <p class="owid-advice">{{ item.why || 'Это помогает снизить вероятность осложнений.' }}</p>
-                        <p class="owid-label">Что сделать сегодня</p>
-                        <p class="owid-advice">{{ item.today || 'Сделайте один конкретный шаг по самоконтролю и запишитесь к врачу при необходимости.' }}</p>
-                        <a :href="item.url" target="_blank" rel="noreferrer">Подробнее в OWID</a>
-                    </article>
-                </div>
-
-                <p v-if="result.image_note" class="image-note">{{ result.image_note }}</p>
                 <p class="warning">{{ result.disclaimer }}</p>
             </section>
         </section>
