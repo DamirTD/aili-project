@@ -103,7 +103,7 @@ async function goToSection(sectionId) {
 <template>
     <main class="page-shell app">
         <header class="topbar">
-            <div class="brand-mark">Med Assistant AI</div>
+            <div class="brand-mark">MedAssistant AI</div>
             <nav class="top-nav" aria-label="Main navigation">
                 <button type="button" class="nav-link" @click="goToSection('product')">Product</button>
                 <button type="button" class="nav-link" @click="goToSection('resources')">Как это работает</button>
@@ -126,7 +126,7 @@ async function goToSection(sectionId) {
             </p>
             <div class="product-visual" aria-label="Product image showcase">
                 <div class="product-video-shell" :style="{ transform: `scale(${productVideoScale})` }">
-                    <img class="product-image" :src="productShowcaseImage" alt="Интерфейс Med Assistant AI" />
+                    <img class="product-image" :src="productShowcaseImage" alt="Интерфейс MedAssistant AI" />
                 </div>
             </div>
         </section>
@@ -163,7 +163,7 @@ async function goToSection(sectionId) {
         </section>
 
         <footer class="page-footer">
-            <p>© Med Assistant AI. Все права защищены.</p>
+            <p>© MedAssistant AI. Все права защищены.</p>
         </footer>
     </main>
 </template>
