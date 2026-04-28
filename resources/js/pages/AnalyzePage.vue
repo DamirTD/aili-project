@@ -383,7 +383,7 @@ restoreCachedResult();
 <template>
     <main class="page-shell app analyze-page">
         <section class="topbar analyze-topbar">
-            <a href="/" class="brand-mark brand-home-link">MedAssistand AI</a>
+            <a href="/" class="brand-mark brand-home-link">Med Assistant AI</a>
             <button v-if="result" type="button" class="ghost-btn topbar-new-request" @click="goHome">Новый запрос</button>
         </section>
         <p v-if="errorText" class="error">{{ errorText }}</p>

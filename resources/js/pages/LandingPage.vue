@@ -23,7 +23,7 @@ const productShowcaseImage =
             "<rect x='220' y='270' rx='18' width='560' height='210' fill='#f8faff' stroke='#dde5f6'/>" +
             "<rect x='800' y='270' rx='18' width='560' height='210' fill='#fff8f6' stroke='#f0ddcf'/>" +
             "<rect x='220' y='510' rx='18' width='1140' height='210' fill='#fdfdff' stroke='#e4e9f5'/>" +
-            "<text x='260' y='220' font-family='Arial' font-size='28' fill='#4b5570' font-weight='700'>MedAssistand AI</text>" +
+            "<text x='260' y='220' font-family='Arial' font-size='28' fill='#4b5570' font-weight='700'>MedAssistant AI</text>" +
             "<text x='260' y='338' font-family='Arial' font-size='24' fill='#2e3852'>Анализ симптомов</text>" +
             "<text x='840' y='338' font-family='Arial' font-size='24' fill='#5a4458'>Результат openFDA</text>" +
         "</svg>"
@@ -103,7 +103,7 @@ async function goToSection(sectionId) {
 <template>
     <main class="page-shell app">
         <header class="topbar">
-            <div class="brand-mark">MedAssistand AI</div>
+            <div class="brand-mark">Med Assistant AI</div>
             <nav class="top-nav" aria-label="Main navigation">
                 <button type="button" class="nav-link" @click="goToSection('product')">Product</button>
                 <button type="button" class="nav-link" @click="goToSection('resources')">Как это работает</button>
@@ -126,7 +126,7 @@ async function goToSection(sectionId) {
             </p>
             <div class="product-visual" aria-label="Product image showcase">
                 <div class="product-video-shell" :style="{ transform: `scale(${productVideoScale})` }">
-                    <img class="product-image" :src="productShowcaseImage" alt="Интерфейс MedAssistand AI" />
+                    <img class="product-image" :src="productShowcaseImage" alt="Интерфейс Med Assistant AI" />
                 </div>
             </div>
         </section>
@@ -163,7 +163,7 @@ async function goToSection(sectionId) {
         </section>
 
         <footer class="page-footer">
-            <p>© MedAssistand AI. Все права защищены.</p>
+            <p>© Med Assistant AI. Все права защищены.</p>
         </footer>
     </main>
 </template>
