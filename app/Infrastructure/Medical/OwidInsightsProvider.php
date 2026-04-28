@@ -6,14 +6,14 @@ use Illuminate\Support\Facades\Http;
 
 class OwidInsightsProvider
 {
-    public function getInsights(string $description, bool|string $verifyOption): array
+    public function getInsights(string $description, bool|string $verifyOption, ?string $domain = null): array
     {
         $emergency = $this->resolveEmergencyOwidInsights($description);
         if ($emergency !== []) {
             return $emergency;
         }
 
-        $catalog = config('medical_context.owid_catalog', []);
+        $catalog = config('medical_triage.owid_catalog', []);
         if (! is_array($catalog) || $catalog === []) {
             return [];
         }
@@ -22,19 +22,29 @@ class OwidInsightsProvider
         $selected = [];
 
         foreach ($catalog as $metric) {
+            if (! $this->isMetricInDomain($metric, $domain)) {
+                continue;
+            }
+
             $keywords = is_array($metric['keywords'] ?? null) ? $metric['keywords'] : [];
+            $score = 0;
             foreach ($keywords as $keyword) {
                 if (str_contains($descriptionLc, mb_strtolower((string) $keyword))) {
-                    $selected[] = $metric;
-                    break;
+                    $score++;
                 }
+            }
+
+            if ($score > 0) {
+                $metric['_score'] = $score;
+                $selected[] = $metric;
             }
         }
 
         if ($selected === []) {
-            $selected = array_slice($catalog, 0, 3);
+            return [];
         }
 
+        usort($selected, static fn (array $a, array $b): int => (($b['_score'] ?? 0) <=> ($a['_score'] ?? 0)));
         $selected = array_values(array_slice($selected, 0, 3));
         $result = [];
 
@@ -159,7 +169,7 @@ class OwidInsightsProvider
     protected function resolveEmergencyOwidInsights(string $description): array
     {
         $text = mb_strtolower($description);
-        $profiles = config('medical_context.owid_emergency_profiles', []);
+        $profiles = config('medical_triage.owid_emergency_profiles', []);
 
         if (! is_array($profiles) || $profiles === []) {
             return [];
@@ -201,6 +211,48 @@ class OwidInsightsProvider
         }
 
         return [];
+    }
+
+    protected function isMetricInDomain(array $metric, ?string $domain): bool
+    {
+        if ($domain === null || $domain === '' || $domain === 'neutral') {
+            return true;
+        }
+
+        $domains = is_array($metric['domains'] ?? null) ? $metric['domains'] : [];
+        if ($domains === []) {
+            return false;
+        }
+
+        foreach ($domains as $metricDomain) {
+            if (mb_strtolower((string) $metricDomain) === mb_strtolower($domain)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function resolveNeutralInsights(): array
+    {
+        $cards = config('medical_triage.owid_neutral_cards', []);
+        if (! is_array($cards) || $cards === []) {
+            return [];
+        }
+
+        $result = [];
+        foreach (array_slice($cards, 0, 3) as $card) {
+            $result[] = [
+                'title' => (string) ($card['title'] ?? 'Профилактика'),
+                'advice' => (string) ($card['advice'] ?? 'Наблюдайте за симптомами и обратитесь к врачу при ухудшении.'),
+                'why' => (string) ($card['why'] ?? 'Недостаточно признаков для специфического риск-профиля.'),
+                'today' => (string) ($card['today'] ?? 'Фиксируйте симптомы и контролируйте базовые показатели.'),
+                'url' => (string) ($card['url'] ?? 'https://ourworldindata.org/explorers/global-health'),
+                'source' => 'OWID',
+            ];
+        }
+
+        return $result;
     }
 }
 
