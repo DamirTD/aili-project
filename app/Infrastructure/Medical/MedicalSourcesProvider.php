@@ -11,6 +11,8 @@ class MedicalSourcesProvider
         $queries = $this->buildSearchQueries($description, $domain);
         $sources = array_merge(
             $this->collectOpenFdaSources($description, $verifyOption),
+            $this->collectClinicalTrialsSources($queries['en_query'], $verifyOption),
+            $this->collectWhoGhoSources($domain, $verifyOption),
             $this->collectMedicalSources($queries['en_query'], $verifyOption),
             $this->collectClinicalTablesSources($queries['en_query'], $verifyOption)
         );
@@ -197,6 +199,130 @@ class MedicalSourcesProvider
         }
 
         return array_values(array_slice($sources, 0, (int) config('medical_sources.source_fetch.max_output_sources', 6)));
+    }
+
+    protected function collectClinicalTrialsSources(string $queryText, bool|string $verifyOption): array
+    {
+        if (! (bool) config('medical_sources.clinicaltrials.enabled', false)) {
+            return [];
+        }
+
+        $baseUrl = rtrim((string) config('medical_sources.clinicaltrials.base_url', 'https://clinicaltrials.gov/api/v2'), '/');
+        $limit = max(1, (int) config('medical_sources.clinicaltrials.studies_limit', 3));
+        $query = trim(mb_substr($queryText, 0, 120));
+        if ($query === '') {
+            return [];
+        }
+
+        $url = "{$baseUrl}/studies?query.term=".urlencode($query)."&pageSize={$limit}";
+
+        try {
+            $response = Http::withOptions(['verify' => $verifyOption])
+                ->timeout((int) config('medical_sources.source_fetch.timeout_seconds', 20))
+                ->get($url);
+
+            if (! $response->ok()) {
+                return [];
+            }
+
+            $payload = $response->json();
+            $studies = is_array($payload['studies'] ?? null) ? $payload['studies'] : [];
+            if ($studies === []) {
+                return [];
+            }
+
+            $sources = [];
+            foreach (array_slice($studies, 0, $limit) as $study) {
+                $protocol = is_array($study['protocolSection'] ?? null) ? $study['protocolSection'] : [];
+                $idModule = is_array($protocol['identificationModule'] ?? null) ? $protocol['identificationModule'] : [];
+                $statusModule = is_array($protocol['statusModule'] ?? null) ? $protocol['statusModule'] : [];
+                $conditionsModule = is_array($protocol['conditionsModule'] ?? null) ? $protocol['conditionsModule'] : [];
+
+                $nctId = trim((string) ($idModule['nctId'] ?? ''));
+                $title = trim((string) ($idModule['briefTitle'] ?? ''));
+                if ($nctId === '' || $title === '') {
+                    continue;
+                }
+
+                $conditions = is_array($conditionsModule['conditions'] ?? null) ? $conditionsModule['conditions'] : [];
+                $conditionsText = $conditions !== [] ? implode(', ', array_slice(array_map('strval', $conditions), 0, 3)) : 'Без уточненных условий';
+                $overallStatus = trim((string) ($statusModule['overallStatus'] ?? ''));
+                $statusText = $overallStatus !== '' ? "Статус: {$overallStatus}. " : '';
+
+                $sources[] = [
+                    'title' => "ClinicalTrials: {$title}",
+                    'url' => "https://clinicaltrials.gov/study/{$nctId}",
+                    'snippet' => mb_substr($statusText."Условия исследования: {$conditionsText}.", 0, 240),
+                    'source_domain' => 'clinicaltrials.gov',
+                    'language' => 'en',
+                ];
+            }
+
+            return $sources;
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    protected function collectWhoGhoSources(?string $domain, bool|string $verifyOption): array
+    {
+        if (! (bool) config('medical_sources.who_gho.enabled', false)) {
+            return [];
+        }
+
+        $baseUrl = rtrim((string) config('medical_sources.who_gho.base_url', 'https://ghoapi.azureedge.net/api'), '/');
+        $indicators = config('medical_sources.who_gho.indicators', []);
+        if (! is_array($indicators) || $indicators === []) {
+            return [];
+        }
+
+        $domainKey = (string) ($domain ?? 'neutral');
+        $indicatorCode = trim((string) ($indicators[$domainKey] ?? ($indicators['neutral'] ?? '')));
+        if ($indicatorCode === '') {
+            return [];
+        }
+
+        $url = "{$baseUrl}/{$indicatorCode}?\$top=1";
+        try {
+            $response = Http::withOptions(['verify' => $verifyOption])
+                ->timeout((int) config('medical_sources.source_fetch.timeout_seconds', 20))
+                ->get($url);
+
+            if (! $response->ok()) {
+                return [];
+            }
+
+            $payload = $response->json();
+            $rows = is_array($payload['value'] ?? null) ? $payload['value'] : [];
+            $row = is_array($rows[0] ?? null) ? $rows[0] : [];
+
+            $numericValue = $this->extractFirstNumericValue($row);
+            $country = trim((string) ($row['SpatialDim'] ?? 'World'));
+            $year = trim((string) ($row['TimeDim'] ?? ''));
+            $metricText = $numericValue !== null ? (string) $numericValue : 'н/д';
+            $yearText = $year !== '' ? " за {$year} год" : '';
+
+            return [[
+                'title' => "WHO GHO indicator: {$indicatorCode}",
+                'url' => "https://www.who.int/data/gho",
+                'snippet' => mb_substr("Показатель {$indicatorCode} ({$country}){$yearText}: {$metricText}.", 0, 240),
+                'source_domain' => 'who.int',
+                'language' => 'en',
+            ]];
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    protected function extractFirstNumericValue(array $row): ?float
+    {
+        foreach ($row as $value) {
+            if (is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))) {
+                return (float) $value;
+            }
+        }
+
+        return null;
     }
 
     protected function normalizeSources(array $sources, string $description, ?string $domain, string $enQuery): array

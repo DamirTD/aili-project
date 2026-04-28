@@ -44,4 +44,12 @@ return [
         'ca_bundle' => env('GROQ_AI_CA_BUNDLE'),
     ],
 
+    'deepseek' => [
+        'api_key' => env('DEEPSEEK_API_KEY'),
+        'model' => env('DEEPSEEK_MODEL', 'deepseek-chat'),
+        'base_url' => env('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1'),
+        'verify_ssl' => env('DEEPSEEK_VERIFY_SSL', true),
+        'ca_bundle' => env('DEEPSEEK_CA_BUNDLE'),
+    ],
+
 ];

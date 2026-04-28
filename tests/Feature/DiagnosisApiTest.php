@@ -25,7 +25,9 @@ class DiagnosisApiTest extends TestCase
                 ->andReturn([
                     'diagnosis' => 'Возможна вирусная инфекция',
                     'confidence' => 'средняя',
+                    'confidence_score' => 72,
                     'urgency' => 'средняя',
+                    'severity' => 'средняя',
                     'about' => 'Симптомы похожи на ОРВИ.',
                     'confidence_reason' => 'Типичный респираторный паттерн без тяжелых красных флагов.',
                     'possible_causes' => ['Вирусная инфекция'],
@@ -53,7 +55,9 @@ class DiagnosisApiTest extends TestCase
             ->assertJsonStructure([
                 'diagnosis',
                 'confidence',
+                'confidence_score',
                 'urgency',
+                'severity',
                 'about',
                 'confidence_reason',
                 'possible_causes',
@@ -71,7 +75,9 @@ class DiagnosisApiTest extends TestCase
                 'image_note',
             ])
             ->assertJsonPath('confidence', 'средняя')
+            ->assertJsonPath('confidence_score', 72)
             ->assertJsonPath('urgency', 'средняя')
+            ->assertJsonPath('severity', 'средняя')
             ->assertJsonPath('home_care_window', 'Наблюдайте симптомы 24-48 часов.');
     }
 

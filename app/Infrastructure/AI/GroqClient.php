@@ -82,5 +82,51 @@ class GroqClient
                 ]
             );
     }
+
+    public function openAiCompatibleText(
+        string $apiKey,
+        string $baseUrl,
+        bool|string $verifyOption,
+        string $model,
+        string $prompt
+    ): Response {
+        return Http::withOptions(['verify' => $verifyOption])
+            ->withToken($apiKey)
+            ->timeout(90)
+            ->post(
+                rtrim($baseUrl, '/').'/chat/completions',
+                [
+                    'model' => $model,
+                    'temperature' => 0.2,
+                    'response_format' => ['type' => 'json_object'],
+                    'messages' => [
+                        [
+                            'role' => 'system',
+                            'content' => 'Ты медицинский помощник triage. Возвращай только валидный JSON.',
+                        ],
+                        [
+                            'role' => 'user',
+                            'content' => $prompt,
+                        ],
+                    ],
+                ]
+            );
+    }
+
+    public function deepSeekText(
+        string $apiKey,
+        string $baseUrl,
+        bool|string $verifyOption,
+        string $model,
+        string $prompt
+    ): Response {
+        return $this->openAiCompatibleText(
+            apiKey: $apiKey,
+            baseUrl: $baseUrl,
+            verifyOption: $verifyOption,
+            model: $model,
+            prompt: $prompt
+        );
+    }
 }
 

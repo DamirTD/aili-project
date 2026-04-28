@@ -58,13 +58,24 @@ XML;
         Http::fake([
             'wsearch.nlm.nih.gov/*' => Http::response($xml, 200),
             'clinicaltables.nlm.nih.gov/*' => Http::response('[0,[],null,[]]', 200),
+            'clinicaltrials.gov/api/v2/studies*' => Http::response('{"studies":[]}', 200),
+            'ghoapi.azureedge.net/api/*' => Http::response('{"value":[]}', 200),
         ]);
 
         $provider = new MedicalSourcesProvider();
         $sources = $provider->getSources('кашель и насморк', true, 'respiratory');
+        $urls = array_map(static fn (array $item): string => (string) ($item['url'] ?? ''), $sources);
 
-        $this->assertCount(1, $sources);
-        $this->assertSame('https://medlineplus.gov/flu.html', (string) ($sources[0]['url'] ?? ''));
+        $this->assertTrue(
+            collect($urls)->contains(
+                static fn (string $url): bool => str_contains($url, 'https://medlineplus.gov/flu.html')
+            )
+        );
+        $this->assertFalse(
+            collect($urls)->contains(
+                static fn (string $url): bool => str_contains($url, 'https://example.com/random')
+            )
+        );
     }
 
     public function test_medical_sources_provider_collects_clinical_tables_results_for_russian_query(): void
@@ -81,6 +92,8 @@ XML;
         Http::fake([
             'wsearch.nlm.nih.gov/*' => Http::response($emptyMedline, 200),
             'clinicaltables.nlm.nih.gov/*' => Http::response($clinicalTablesJson, 200),
+            'clinicaltrials.gov/api/v2/studies*' => Http::response('{"studies":[]}', 200),
+            'ghoapi.azureedge.net/api/*' => Http::response('{"value":[]}', 200),
         ]);
 
         $provider = new MedicalSourcesProvider();
@@ -129,6 +142,8 @@ XML;
             'api.fda.gov/drug/event.json*' => Http::response($eventJson, 200),
             'wsearch.nlm.nih.gov/*' => Http::response($emptyMedline, 200),
             'clinicaltables.nlm.nih.gov/*' => Http::response('[0,[],null,[]]', 200),
+            'clinicaltrials.gov/api/v2/studies*' => Http::response('{"studies":[]}', 200),
+            'ghoapi.azureedge.net/api/*' => Http::response('{"value":[]}', 200),
         ]);
 
         $provider = new MedicalSourcesProvider();
@@ -142,6 +157,69 @@ XML;
         $this->assertTrue(
             collect($sources)->contains(
                 static fn (array $source): bool => str_contains((string) ($source['url'] ?? ''), 'open.fda.gov/apis/drug/event/')
+            )
+        );
+    }
+
+    public function test_medical_sources_provider_collects_clinical_trials_sources(): void
+    {
+        $emptyMedline = '<?xml version="1.0" encoding="UTF-8"?><searchResults><list></list></searchResults>';
+        $clinicalTrials = <<<'JSON'
+{
+  "studies": [
+    {
+      "protocolSection": {
+        "identificationModule": {
+          "nctId": "NCT01234567",
+          "briefTitle": "Respiratory Symptoms Monitoring Study"
+        },
+        "statusModule": {
+          "overallStatus": "RECRUITING"
+        },
+        "conditionsModule": {
+          "conditions": ["Cough", "Fever"]
+        }
+      }
+    }
+  ]
+}
+JSON;
+
+        Http::fake([
+            'wsearch.nlm.nih.gov/*' => Http::response($emptyMedline, 200),
+            'clinicaltables.nlm.nih.gov/*' => Http::response('[0,[],null,[]]', 200),
+            'clinicaltrials.gov/api/v2/studies*' => Http::response($clinicalTrials, 200),
+            'ghoapi.azureedge.net/api/*' => Http::response('{"value":[]}', 200),
+        ]);
+
+        $provider = new MedicalSourcesProvider();
+        $sources = $provider->getSources('Кашель и температура', true, 'respiratory');
+
+        $this->assertTrue(
+            collect($sources)->contains(
+                static fn (array $source): bool => str_contains((string) ($source['url'] ?? ''), 'clinicaltrials.gov/study/NCT01234567')
+            )
+        );
+    }
+
+    public function test_medical_sources_provider_collects_who_gho_source(): void
+    {
+        $emptyMedline = '<?xml version="1.0" encoding="UTF-8"?><searchResults><list></list></searchResults>';
+        $whoJson = '{"value":[{"SpatialDim":"World","TimeDim":2022,"NumericValue":17.5}]}';
+
+        Http::fake([
+            'wsearch.nlm.nih.gov/*' => Http::response($emptyMedline, 200),
+            'clinicaltables.nlm.nih.gov/*' => Http::response('[0,[],null,[]]', 200),
+            'clinicaltrials.gov/api/v2/studies*' => Http::response('{"studies":[]}', 200),
+            'ghoapi.azureedge.net/api/*' => Http::response($whoJson, 200),
+        ]);
+
+        $provider = new MedicalSourcesProvider();
+        $sources = $provider->getSources('Боль в груди и одышка', true, 'cardiology');
+
+        $this->assertTrue(
+            collect($sources)->contains(
+                static fn (array $source): bool => str_contains((string) ($source['title'] ?? ''), 'WHO GHO indicator:')
             )
         );
     }

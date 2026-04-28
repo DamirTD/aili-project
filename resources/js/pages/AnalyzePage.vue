@@ -16,6 +16,10 @@ const uploadedImagePreview = ref('');
 const loading = ref(false);
 const errorText = ref('');
 const result = ref(null);
+const followupAnswers = ref([]);
+const followupRoundUsed = ref(false);
+const analysisStep = ref(0);
+const MAX_ANALYSIS_STEPS = 3;
 const medicineSearchQuery = ref('');
 const medicinePage = ref(1);
 const medicinesPerPage = 8;
@@ -92,6 +96,10 @@ function urgencyClass(value) {
     return 'is-low';
 }
 function confidencePercent(value) {
+    if (result.value && Number.isFinite(Number(result.value.confidence_score))) {
+        const score = Math.max(0, Math.min(100, Number(result.value.confidence_score)));
+        return Math.round(score);
+    }
     const text = String(value ?? '').toLowerCase();
     if (text.includes('высок')) return 84;
     if (text.includes('сред')) return 62;
@@ -110,10 +118,69 @@ function urgencyLabel(value) {
     if (text.includes('сред')) return 'Желательна очная консультация';
     return 'Можно наблюдать дома по плану';
 }
+function severityClass(value) {
+    const text = String(value ?? '').toLowerCase();
+    if (text.includes('крит') || text.includes('тяж')) return 'is-high';
+    if (text.includes('сред')) return 'is-medium';
+    return 'is-low';
+}
+function severityLabel(value) {
+    const text = String(value ?? '').toLowerCase();
+    if (text.includes('крит')) return 'Критическое состояние, требуется немедленная помощь';
+    if (text.includes('тяж')) return 'Тяжелое состояние, нужен срочный очный осмотр';
+    if (text.includes('сред')) return 'Средний риск, требуется наблюдение и контроль';
+    return 'Легкое течение, наблюдение дома возможно';
+}
 function isValidHttpUrl(value) { return /^https?:\/\//i.test(String(value ?? '').trim()); }
 function filteredSources(items) {
     if (!Array.isArray(items)) return [];
     return items.filter((source) => isValidHttpUrl(source?.url) && String(source?.title ?? '').trim() !== '');
+}
+function evidenceSources(items) {
+    return filteredSources(items).slice(0, 6);
+}
+function normalizedFollowupQuestions(resultData) {
+    const rawQuestions = Array.isArray(resultData?.followup_questions) ? resultData.followup_questions : [];
+    const normalized = [];
+    const seen = new Set();
+
+    rawQuestions.forEach((item) => {
+        const text = String(item ?? '');
+        text
+            .split('\n')
+            .map((line) => line.trim())
+            .forEach((line) => {
+                const cleaned = line.replace(/^[-*•\d.)\s]+/, '').trim();
+                if (!cleaned || /^что уточнить/i.test(cleaned)) return;
+                const key = cleaned.toLowerCase();
+                if (seen.has(key)) return;
+                seen.add(key);
+                normalized.push(cleaned);
+            });
+    });
+
+    return normalized.slice(0, 3);
+}
+function initializeFollowupAnswers(resultData) {
+    const questions = normalizedFollowupQuestions(resultData);
+    followupAnswers.value = questions.map(() => '');
+}
+function updateFollowupAnswer(index, event) {
+    followupAnswers.value[index] = String(event?.target?.value ?? '');
+}
+function buildFollowupAppendix() {
+    const questions = normalizedFollowupQuestions(result.value);
+    const lines = [];
+    questions.forEach((question, index) => {
+        const answer = String(followupAnswers.value[index] ?? '').trim();
+        if (!answer) return;
+        lines.push(`- ${question}: ${answer}`);
+    });
+    if (!lines.length) return '';
+    return `\n\nУточнения пациента:\n${lines.join('\n')}`;
+}
+function canAskFollowupAgain() {
+    return !followupRoundUsed.value && analysisStep.value > 0 && analysisStep.value < MAX_ANALYSIS_STEPS;
 }
 function openFdaLabelCards(items) {
     return filteredSources(items).filter((s) => String(s.title ?? '').toLowerCase().startsWith('openfda label:')).map((s) => ({
@@ -151,6 +218,9 @@ function restoreCachedResult() {
         if (parsed.selectedMedicine) selectedMedicine.value = String(parsed.selectedMedicine);
         if (parsed.resultData && typeof parsed.resultData === 'object') {
             result.value = parsed.resultData;
+            initializeFollowupAnswers(parsed.resultData);
+            analysisStep.value = Number(parsed.analysisStep ?? 1);
+            followupRoundUsed.value = Boolean(parsed.followupRoundUsed ?? false);
             mode.value = 'result';
         }
     } catch {
@@ -165,6 +235,8 @@ function persistResultSnapshot(resultData) {
             description: description.value,
             age: age.value,
             selectedMedicine: selectedMedicine.value,
+            analysisStep: analysisStep.value,
+            followupRoundUsed: followupRoundUsed.value,
             resultData,
         };
         sessionStorage.setItem(RESULT_STORAGE_KEY, JSON.stringify(payload));
@@ -240,7 +312,10 @@ async function runAnalysis() {
     if (uploadedImage.value) formData.append('image', uploadedImage.value);
 
     try {
+        analysisStep.value = 1;
+        followupRoundUsed.value = false;
         result.value = await analyzeDiagnosis(formData);
+        initializeFollowupAnswers(result.value);
         persistResultSnapshot(result.value);
         mode.value = 'result';
     } catch (error) {
@@ -251,9 +326,47 @@ async function runAnalysis() {
     }
 }
 
+async function rerunWithFollowups() {
+    if (!canAskFollowupAgain()) {
+        errorText.value = 'Достигнут лимит уточнений. Начните новый запрос для следующего цикла.';
+        return;
+    }
+
+    const appendix = buildFollowupAppendix();
+    if (!appendix) {
+        errorText.value = 'Заполните хотя бы один ответ на уточняющий вопрос.';
+        return;
+    }
+
+    errorText.value = '';
+    loading.value = true;
+    mode.value = 'loading';
+    followupRoundUsed.value = true;
+
+    const formData = new FormData();
+    formData.append('description', composeDescriptionWithMedicine(description.value) + appendix);
+    if (age.value) formData.append('age', String(age.value));
+    if (uploadedImage.value) formData.append('image', uploadedImage.value);
+
+    try {
+        analysisStep.value += 1;
+        result.value = await analyzeDiagnosis(formData);
+        initializeFollowupAnswers(result.value);
+        persistResultSnapshot(result.value);
+        mode.value = 'result';
+    } catch (error) {
+        errorText.value = error.message;
+        mode.value = 'result';
+    } finally {
+        loading.value = false;
+    }
+}
+
 function goHome() {
     sessionStorage.removeItem(RESULT_STORAGE_KEY);
     sessionStorage.removeItem('analysis_description');
+    followupRoundUsed.value = false;
+    analysisStep.value = 0;
     router.push({ name: 'landing' });
 }
 
@@ -261,6 +374,8 @@ function stepBack(targetMode) {
     errorText.value = '';
     mode.value = targetMode;
 }
+
+const followupQuestions = computed(() => normalizedFollowupQuestions(result.value));
 
 restoreCachedResult();
 </script>
@@ -376,13 +491,21 @@ restoreCachedResult();
                         <p class="card-label">Уровень уверенности</p>
                         <h3 class="card-title">{{ result.confidence }}</h3>
                         <div class="confidence-track"><div class="confidence-bar" :style="{ width: `${confidencePercent(result.confidence)}%` }"></div></div>
-                        <p class="confidence-caption">{{ confidenceHint(result.confidence) }}</p>
+                        <p class="confidence-caption">
+                            {{ confidenceHint(result.confidence) }}
+                            <span v-if="Number.isFinite(Number(result.confidence_score))"> Текущий score: {{ Math.round(Number(result.confidence_score)) }}%</span>
+                        </p>
                     </article>
                     <article class="result-card" :class="urgencyClass(result.urgency)">
                         <p class="card-label">Срочность</p>
                         <h3 class="card-title">{{ result.urgency }}</h3>
                         <p class="card-text">{{ urgencyLabel(result.urgency) }}</p>
                         <p class="card-note">{{ result.home_care_window || 'Отслеживайте динамику симптомов в ближайшие сутки.' }}</p>
+                    </article>
+                    <article class="result-card" :class="severityClass(result.severity)">
+                        <p class="card-label">Тяжесть состояния</p>
+                        <h3 class="card-title">{{ result.severity || 'не указана' }}</h3>
+                        <p class="card-text">{{ severityLabel(result.severity) }}</p>
                     </article>
                 </div>
 
@@ -397,6 +520,49 @@ restoreCachedResult();
                 <section class="result-section"><h3>Что делать сейчас</h3><ol class="timeline-list"><li v-for="stepItem in result.care_plan || []" :key="stepItem">{{ stepItem }}</li></ol></section>
                 <section class="result-section" v-if="result.do_not_do?.length"><h3>Чего не делать</h3><ul class="clean-list warning-list"><li v-for="item in result.do_not_do" :key="item">{{ item }}</li></ul></section>
                 <section class="alert-box" v-if="result.red_flags?.length"><h3>Когда обращаться срочно</h3><ul class="clean-list"><li v-for="flag in result.red_flags" :key="flag">{{ flag }}</li></ul></section>
+                <section class="result-section" v-if="result.red_flags?.length">
+                    <h3>Почему выставлена срочность</h3>
+                    <p class="card-text">Срочность повышена на основе выявленных red flags и уровня тяжести состояния.</p>
+                </section>
+                <section class="result-section" v-if="followupQuestions.length && !followupRoundUsed">
+                    <h3>Что уточнить для точности</h3>
+                    <div style="margin-top: 12px;">
+                        <p class="card-note">Этап {{ analysisStep }} из {{ MAX_ANALYSIS_STEPS }}.</p>
+                        <div
+                            v-for="(question, index) in followupQuestions"
+                            :key="`followup-input-${index}`"
+                            style="margin-bottom: 10px;"
+                        >
+                            <label style="display:block; margin-bottom: 4px;">{{ question }}</label>
+                            <input
+                                type="text"
+                                :value="followupAnswers[index] || ''"
+                                placeholder="Ваш ответ..."
+                                @input="updateFollowupAnswer(index, $event)"
+                            />
+                        </div>
+                        <button
+                            v-if="canAskFollowupAgain()"
+                            type="button"
+                            class="primary-btn"
+                            @click="rerunWithFollowups"
+                        >
+                            Уточнить и пересчитать
+                        </button>
+                        <p v-else class="card-note">Достигнут финальный этап анализа. Для нового цикла нажмите "Новый запрос".</p>
+                    </div>
+                </section>
+                <section class="result-section" v-else-if="followupRoundUsed">
+                    <p class="card-note">Уточняющие ответы уже учтены в повторном анализе.</p>
+                </section>
+                <section class="result-section" v-if="evidenceSources(result.sources).length">
+                    <h3>На чем основана оценка</h3>
+                    <ul class="clean-list">
+                        <li v-for="source in evidenceSources(result.sources)" :key="source.url">
+                            <a :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.title }}</a>
+                        </li>
+                    </ul>
+                </section>
                 <p v-if="result.personalization_note" class="about">{{ result.personalization_note }}</p>
                 <p class="warning">{{ result.disclaimer }}</p>
             </section>

@@ -7,6 +7,9 @@ return [
         'clinicaltables.nlm.nih.gov',
         'api.fda.gov',
         'open.fda.gov',
+        'clinicaltrials.gov',
+        'ghoapi.azureedge.net',
+        'who.int',
     ],
 
     'source_fetch' => [
@@ -85,6 +88,24 @@ return [
             'регидрон' => 'oral rehydration salts',
             'пенталгин' => 'acetaminophen',
             'цитрамон' => 'aspirin',
+        ],
+    ],
+
+    'clinicaltrials' => [
+        'enabled' => true,
+        'base_url' => 'https://clinicaltrials.gov/api/v2',
+        'studies_limit' => 3,
+    ],
+
+    'who_gho' => [
+        'enabled' => true,
+        'base_url' => 'https://ghoapi.azureedge.net/api',
+        'indicators' => [
+            'respiratory' => 'SA_0000001688',
+            'cardiology' => 'NCD_CVD_30C',
+            'neurology' => 'SA_0000001454',
+            'gastro' => 'NCD_BMI_30A',
+            'neutral' => 'NCD_BMI_30A',
         ],
     ],
 

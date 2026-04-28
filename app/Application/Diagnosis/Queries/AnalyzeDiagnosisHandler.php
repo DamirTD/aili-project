@@ -26,6 +26,11 @@ class AnalyzeDiagnosisHandler
         $baseUrl = rtrim(config('services.groq_ai.base_url', 'https://api.groq.com/openai/v1'), '/');
         $verifySsl = filter_var(config('services.groq_ai.verify_ssl', true), FILTER_VALIDATE_BOOL);
         $caBundle = config('services.groq_ai.ca_bundle');
+        $deepSeekApiKey = config('services.deepseek.api_key');
+        $deepSeekModel = config('services.deepseek.model', 'deepseek-chat');
+        $deepSeekBaseUrl = rtrim(config('services.deepseek.base_url', 'https://api.deepseek.com/v1'), '/');
+        $deepSeekVerifySsl = filter_var(config('services.deepseek.verify_ssl', true), FILTER_VALIDATE_BOOL);
+        $deepSeekCaBundle = config('services.deepseek.ca_bundle');
 
         if (! $apiKey) {
             throw new RuntimeException('GROQ_AI не задан в .env');
@@ -35,8 +40,13 @@ class AnalyzeDiagnosisHandler
         if ($caBundle && is_string($caBundle)) {
             $verifyOption = $caBundle;
         }
+        $deepSeekVerifyOption = $deepSeekVerifySsl;
+        if ($deepSeekCaBundle && is_string($deepSeekCaBundle)) {
+            $deepSeekVerifyOption = $deepSeekCaBundle;
+        }
 
         $domain = $this->detectDomain($query->description);
+        $triageSignals = $this->evaluateTriageSignals($query->description);
         $sources = $this->sourcesProvider->getSources($query->description, $verifyOption, $domain);
         $sources = $this->rerankSourcesWithinDomain($sources, $query->description, $domain);
         $sources = $this->filterValidSources($sources);
@@ -47,6 +57,7 @@ class AnalyzeDiagnosisHandler
             sources: $sources,
             owidInsights: $owidInsights,
             domain: $domain,
+            triageSignals: $triageSignals,
             hasImage: $query->image !== null,
             age: $query->age,
             gender: $query->gender
@@ -54,6 +65,7 @@ class AnalyzeDiagnosisHandler
 
         $usedVision = false;
         $imageNote = null;
+        $deepSeekAttempted = false;
 
         if ($query->image && is_string($visionModel) && $visionModel !== '') {
             $response = $this->groqClient->vision(
@@ -89,10 +101,22 @@ class AnalyzeDiagnosisHandler
             if ($query->image) {
                 $imageNote = 'Изображение получено, но vision-модель не настроена в .env.';
             }
+
+            if ($response->failed() && is_string($deepSeekApiKey) && trim($deepSeekApiKey) !== '') {
+                $deepSeekAttempted = true;
+                $response = $this->groqClient->deepSeekText(
+                    apiKey: $deepSeekApiKey,
+                    baseUrl: $deepSeekBaseUrl,
+                    verifyOption: $deepSeekVerifyOption,
+                    model: (string) $deepSeekModel,
+                    prompt: $prompt
+                );
+            }
         }
 
         if ($response->failed()) {
-            throw new RuntimeException('Ошибка Groq AI: '.$response->body());
+            $providerLabel = $deepSeekAttempted ? 'Groq/DeepSeek' : 'Groq AI';
+            throw new RuntimeException("Ошибка {$providerLabel}: ".$response->body());
         }
 
         $rawText = data_get($response->json(), 'choices.0.message.content', '{}');
@@ -107,6 +131,7 @@ class AnalyzeDiagnosisHandler
             sources: $sources,
             owidInsights: $owidInsights,
             domain: $domain,
+            triageSignals: $triageSignals,
             age: $query->age,
             gender: $query->gender,
             hasImage: $query->image !== null,
@@ -120,6 +145,7 @@ class AnalyzeDiagnosisHandler
         array $sources,
         array $owidInsights,
         ?string $domain,
+        array $triageSignals,
         bool $hasImage,
         ?int $age,
         ?string $gender
@@ -155,6 +181,10 @@ class AnalyzeDiagnosisHandler
         }
 
         $domainText = $domain !== null && $domain !== '' ? $domain : 'neutral';
+        $severityText = (string) ($triageSignals['severity'] ?? 'средняя');
+        $redFlagsText = is_array($triageSignals['red_flags'] ?? null) && $triageSignals['red_flags'] !== []
+            ? implode('; ', $triageSignals['red_flags'])
+            : 'не обнаружены';
 
         $sourcesContext = $sourcesText !== ''
             ? "Ниже внешние источники по симптомам, используй их для рассуждения:\n{$sourcesText}"
@@ -163,6 +193,7 @@ class AnalyzeDiagnosisHandler
         return "Ты медицинский ассистент для предварительного triage.\n".
             "Пользователь дал описание симптомов: {$description}\n".
             "Определенный домен симптомов: {$domainText}.\n".
+            "Rule-based оценка тяжести: {$severityText}. Rule-based red flags: {$redFlagsText}.\n".
             $profileText.
             ($hasImage
                 ? "Пользователь также приложил изображение. Учти визуальные признаки при формировании ответа.\n"
@@ -177,7 +208,7 @@ class AnalyzeDiagnosisHandler
             "Не придумывай ссылки. Если источников недостаточно, оставь sources пустым массивом.\n".
             "Верни ТОЛЬКО JSON без markdown с полями:\n".
             "diagnosis (строка), confidence (низкая|средняя|высокая), urgency (низкая|средняя|высокая|срочно), ".
-            "about (строка), confidence_reason (строка), possible_causes (массив строк), care_plan (массив строк), do_not_do (массив строк), ".
+            "severity (легкая|средняя|тяжелая|критическая), about (строка), confidence_reason (строка), possible_causes (массив строк), care_plan (массив строк), do_not_do (массив строк), ".
             "home_care_window (строка), red_flags (массив строк), followup_questions (массив из 2-3 строк), sources (массив объектов с полями title,url).";
     }
 
@@ -383,6 +414,49 @@ class AnalyzeDiagnosisHandler
         }
 
         return array_values(array_slice($result, 0, 3));
+    }
+
+    protected function evaluateTriageSignals(string $description): array
+    {
+        $text = mb_strtolower($description);
+        $rules = config('medical_triage.triage_rules', []);
+
+        $redFlags = [];
+        $redFlagRules = is_array($rules['red_flags'] ?? null) ? $rules['red_flags'] : [];
+        foreach ($redFlagRules as $rule) {
+            $needle = mb_strtolower(trim((string) ($rule['needle'] ?? '')));
+            $label = trim((string) ($rule['label'] ?? ''));
+            if ($needle === '' || $label === '') {
+                continue;
+            }
+            if (str_contains($text, $needle)) {
+                $redFlags[] = $label;
+            }
+        }
+
+        $severity = 'легкая';
+        $severityKeywords = is_array($rules['severity_keywords'] ?? null) ? $rules['severity_keywords'] : [];
+        foreach (['критическая', 'тяжелая', 'средняя'] as $level) {
+            $keywords = is_array($severityKeywords[$level] ?? null) ? $severityKeywords[$level] : [];
+            foreach ($keywords as $keyword) {
+                $keyword = mb_strtolower(trim((string) $keyword));
+                if ($keyword !== '' && str_contains($text, $keyword)) {
+                    $severity = $level;
+                    break 2;
+                }
+            }
+        }
+
+        if (count($redFlags) >= 2) {
+            $severity = 'критическая';
+        } elseif (count($redFlags) === 1 && $severity === 'легкая') {
+            $severity = 'тяжелая';
+        }
+
+        return [
+            'severity' => $severity,
+            'red_flags' => array_values(array_unique($redFlags)),
+        ];
     }
 }
 
